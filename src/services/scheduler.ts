@@ -2,9 +2,9 @@
 // Coordinates all background workers (watcher, payment monitoring, subscription expiry)
 
 import { logger } from '../utils/logger';
-import { startWatcher } from '../workers/watcher';
-import { startPaymentWatcher } from '../workers/payment-watcher';
-import { startSubscriptionExpiry } from '../workers/subscription-expiry';
+// import { startWatcher } from '../workers/watcher';
+// import { startPaymentWatcher } from '../workers/payment-watcher';
+// import { startSubscriptionExpiry } from '../workers/subscription-expiry';
 
 let isRunning = false;
 
@@ -18,7 +18,10 @@ export function startScheduler(): void {
   }
 
   logger.info('🕐 Starting scheduler services...');
+  logger.info('⚠️ Workers disabled - using GitHub Actions for monitoring');
 
+  // TODO: Re-enable when workers are fixed
+  /*
   try {
     // Start the main content watcher (runs every minute)
     startWatcher();
@@ -28,20 +31,21 @@ export function startScheduler(): void {
     if (process.env.ENABLE_CRYPTO_PAYMENTS === 'true') {
       startPaymentWatcher();
       logger.info('✅ Payment watcher started');
-    } else {
-      logger.info('⏭️  Payment watcher disabled (set ENABLE_CRYPTO_PAYMENTS=true to enable)');
     }
 
-    // Start subscription expiry checker (runs daily at midnight)
+    // Start subscription expiry checker (runs every hour)
     startSubscriptionExpiry();
     logger.info('✅ Subscription expiry checker started');
 
     isRunning = true;
-    logger.info('🎉 All scheduler services running!');
+    logger.info('✅ All scheduler services started successfully');
   } catch (error) {
-    logger.error('Failed to start scheduler:', error);
+    logger.error('❌ Error starting scheduler:', error);
     throw error;
   }
+  */
+
+  isRunning = true;
 }
 
 /**
