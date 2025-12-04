@@ -14,15 +14,15 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
     
-    - name: Setup Python
-      uses: actions/setup-python@v4
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
       with:
-        python-version: '3.11'
+        node-version: '20'
     
     - name: Install dependencies
-      run: pip install requests
+      run: npm install axios
     
-    - name: Run Instagram checker (v7)
+    - name: Run Instagram checker (v8)
       env:
         WEBHOOK_CONFIG: ${{ secrets.WEBHOOK_CONFIG }}
-      run: python scripts/check-instagram-v7.py
+      run: node scripts/check-instagram-v8.js
