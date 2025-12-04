@@ -48,24 +48,48 @@ async function checkInstagram(username, webhookUrl) {
       try {
         const html = await axios.get(`https://www.instagram.com/${username}/`, {
           headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.5',
-            'Referer': 'https://www.instagram.com/',
-            'Cache-Control': 'no-cache'
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Cache-Control': 'max-age=0'
           },
-          timeout: 10000
+          timeout: 15000,
+          maxRedirects: 5
         });
 
-        // Extract post ID from HTML
-        const match = html.data.match(/"shortcode":"([^"]+)"/);
-        if (match) {
-          const shortcode = match[1];
+        // Try multiple regex patterns
+        let shortcode = null;
+        
+        // Pattern 1: Standard shortcode in JSON
+        let match = html.data.match(/"shortcode":"([A-Za-z0-9_-]+)"/);
+        if (match) shortcode = match[1];
+        
+        // Pattern 2: From edge_owner_to_timeline_media
+        if (!shortcode) {
+          match = html.data.match(/edge_owner_to_timeline_media.*?"shortcode":"([A-Za-z0-9_-]+)"/);
+          if (match) shortcode = match[1];
+        }
+        
+        // Pattern 3: From URL pattern
+        if (!shortcode) {
+          match = html.data.match(/instagram\.com\/p\/([A-Za-z0-9_-]+)\//);
+          if (match) shortcode = match[1];
+        }
+
+        if (shortcode) {
           postId = shortcode;
           postUrl = `https://www.instagram.com/p/${shortcode}/`;
           title = `New post from @${username}`;
           pubDate = new Date();
           console.log(`   ✓ Method 2 (HTML scraping) success`);
+        } else {
+          console.log(`   ⚠️ Method 2 (HTML) failed: No shortcode found in HTML`);
         }
       } catch (err) {
         console.log(`   ⚠️ Method 2 (HTML) failed: ${err.message}`);
