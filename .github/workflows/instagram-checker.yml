@@ -1,0 +1,36 @@
+name: Instagram Post Checker
+
+on:
+  schedule:
+    # Run at 00:00, 04:00, 08:00, 12:00, 16:00 UTC (= 08:00, 12:00, 16:00, 20:00, 00:00 WITA)
+    - cron: '0 0,4,8,12,16 * * *'
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  check-instagram:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+    
+    - name: Install dependencies
+      run: npm install axios
+    
+    - name: Run Instagram checker
+      env:
+        WEBHOOK_CONFIG: ${{ secrets.WEBHOOK_CONFIG }}
+      run: node scripts/check-instagram.js
+    
+    - name: Commit last check data
+      run: |
+        git config user.name "GitHub Actions Bot"
+        git config user.email "actions@github.com"
+        git add data/last-posts.json || true
+        git diff --quiet && git diff --staged --quiet || git commit -m "Update last check data [skip ci]"
+        git push || true
