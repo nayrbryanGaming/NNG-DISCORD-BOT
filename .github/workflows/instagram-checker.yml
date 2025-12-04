@@ -22,7 +22,7 @@ jobs:
     - name: Install dependencies
       run: npm install axios
     
-    - name: Run Instagram checker (v8)
+    - name: Run Instagram checker (v9)
       env:
         WEBHOOK_CONFIG: ${{ secrets.WEBHOOK_CONFIG }}
-      run: node scripts/check-instagram-v8.js
+      run: node scripts/check-instagram-v9.js
