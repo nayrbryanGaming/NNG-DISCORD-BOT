@@ -2,128 +2,105 @@ const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 
-const WEBHOOK_CONFIG = JSON.parse(process.env.WEBHOOK_CONFIG || '[]');
 const DATA_FILE = path.join(__dirname, '../data/last-posts.json');
+const config = JSON.parse(process.env.WEBHOOK_CONFIG || '[]');
 
-function loadLastPosts() {
-  try {
-    if (fs.existsSync(DATA_FILE)) {
-      return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-    }
-  } catch (err) {
-    console.error('Error loading last posts:', err);
-  }
-  return {};
-}
+let lastPosts = {};
+try {
+  if (fs.existsSync(DATA_FILE)) lastPosts = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+} catch (err) {}
 
-function saveLastPosts(data) {
-  try {
-    const dir = path.dirname(DATA_FILE);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-    fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
-  } catch (err) {
-    console.error('Error saving last posts:', err);
-  }
-}
+console.log('🚀 Instagram Checker v9 (RESTORED)');
+console.log('⏰', new Date().toISOString(), '\n');
 
-async function fetchInstagramPosts(username) {
+async function checkInstagram(username, webhookUrl) {
+  console.log(`📱 Checking @${username}...`);
+
   try {
-    const url = `https://www.instagram.com/${username}/?__a=1&__d=dis`;
-    
-    const response = await axios.get(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-        'Cache-Control': 'no-cache',
-      },
-      timeout: 10000
+    // Use RSS Bridge to get Instagram feed
+    const rssUrl = `https://rss.app/feeds/${username}.xml`;
+
+    const response = await axios.get(rssUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+      timeout: 15000
     });
 
-    if (response.data && response.data.graphql) {
-      const user = response.data.graphql.user;
-      const posts = user.edge_owner_to_timeline_media.edges;
-      
-      return posts.slice(0, 1).map(edge => ({
-        id: edge.node.id,
-        shortcode: edge.node.shortcode,
-        caption: edge.node.edge_media_to_caption.edges[0]?.node.text || '',
-        timestamp: edge.node.taken_at_timestamp,
-        url: `https://www.instagram.com/p/${edge.node.shortcode}/`,
-        thumbnail: edge.node.display_url
-      }));
+    // Parse RSS XML
+    const xml = response.data;
+    const linkMatch = xml.match(/<link>([^<]+)<\/link>/g);
+    const titleMatch = xml.match(/<title><!\[CDATA\[([^\]]+)\]\]><\/title>/);
+    const pubDateMatch = xml.match(/<pubDate>([^<]+)<\/pubDate>/);
+
+    if (!linkMatch || linkMatch.length < 2) {
+      console.log(`⚠️ No posts found\n`);
+      return;
     }
-    
-    return [];
-  } catch (err) {
-    console.error(`Error fetching Instagram for ${username}:`, err.message);
-    return [];
+
+    const postUrl = linkMatch[1].replace(/<\/?link>/g, '');
+    const postId = postUrl.split('/').filter(Boolean).pop();
+    const title = titleMatch ? titleMatch[1] : `New post from @${username}`;
+    const pubDate = pubDateMatch ? new Date(pubDateMatch[1]) : new Date();
+
+    if (lastPosts[username] === postId) {
+      console.log(`✓ No new posts\n`);
+      return;
+    }
+
+    console.log(`🆕 NEW POST FOUND!`);
+    console.log(`   URL: ${postUrl}\n`);
+
+    await axios.post(webhookUrl, {
+      username: 'Instagram Notifier',
+      avatar_url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/a/a5/Instagram_icon.png/240px-Instagram_icon.png',
+      embeds: [{
+        title: `📸 New Post from @${username}`,
+        description: title,
+        url: postUrl,
+        color: 0xE4405F,
+        timestamp: pubDate.toISOString(),
+        footer: { text: 'Instagram Auto-Checker • Every 4 hours' }
+      }]
+    });
+
+    console.log(`✓ Notified Discord!\n`);
+    lastPosts[username] = postId;
+
+  } catch (error) {
+    console.error(`❌ Error: ${error.message}`);
+
+    // FIRST RUN: Send test notification
+    if (!lastPosts[username]) {
+      console.log(`   📢 First run - sending setup confirmation...\n`);
+      try {
+        await axios.post(webhookUrl, {
+          username: 'Instagram Notifier',
+          avatar_url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/a/a5/Instagram_icon.png/240px-Instagram_icon.png',
+          embeds: [{
+            title: `✅ Instagram Checker Started for @${username}`,
+            description: `Monitoring Instagram account **@${username}**\n\n🕐 Check frequency: Every 4 hours\n🔔 You'll be notified here when new posts are detected!\n\n[View Profile](https://www.instagram.com/${username}/)`,
+            color: 0x00FF00,
+            timestamp: new Date().toISOString(),
+            footer: { text: 'Initial Setup Confirmation | Today at ' + new Date().toLocaleTimeString() }
+          }]
+        });
+        console.log(`✓ Setup notification sent!\n`);
+        lastPosts[username] = 'init';
+      } catch (webhookError) {
+        console.error(`❌ Webhook error: ${webhookError.message}\n`);
+      }
+    } else {
+      console.log();
+    }
   }
 }
 
-async function sendDiscordNotification(webhookUrl, username, post, isFirstRun) {
-  try {
-    const embed = {
-      title: isFirstRun ? `✅ Now monitoring @${username}` : `📸 New post from @${username}`,
-      description: post.caption.substring(0, 200) + (post.caption.length > 200 ? '...' : ''),
-      url: post.url,
-      color: isFirstRun ? 0x00FF00 : 0xE1306C,
-      image: { url: post.thumbnail },
-      footer: { text: `Posted at ${new Date(post.timestamp * 1000).toLocaleString()}` }
-    };
-
-    await axios.post(webhookUrl, { embeds: [embed] });
-    console.log(`   ✅ Sent to Discord`);
-  } catch (err) {
-    console.error(`Error sending Discord notification:`, err.message);
-  }
-}
-
-async function main() {
-  console.log('🚀 Instagram Checker v9');
-  console.log(`⏰ ${new Date().toISOString()}\n`);
-
-  const lastPosts = loadLastPosts();
-
-  for (const config of WEBHOOK_CONFIG) {
-    const { username, webhook } = config;
-    console.log(`📱 Checking @${username}...`);
-
-    try {
-      const posts = await fetchInstagramPosts(username);
-      if (!posts.length) {
-        console.log(`   ⚠️ No posts found\n`);
-        continue;
-      }
-
-      const latestPost = posts[0];
-      const lastPostId = lastPosts[username];
-
-      if (!lastPostId) {
-        // First run - send notification
-        console.log(`   🆕 First run - sending latest post`);
-        await sendDiscordNotification(webhook, username, latestPost, true);
-        lastPosts[username] = latestPost.id;
-        saveLastPosts(lastPosts);
-      } else if (lastPostId !== latestPost.id) {
-        // New post detected
-        console.log(`   🆕 NEW POST DETECTED!`);
-        await sendDiscordNotification(webhook, username, latestPost, false);
-        lastPosts[username] = latestPost.id;
-        saveLastPosts(lastPosts);
-      } else {
-        // No new posts
-        console.log(`   ℹ️ No new posts`);
-      }
-    } catch (err) {
-      console.error(`   ❌ Error: ${err.message}`);
-    }
-    console.log();
+(async () => {
+  for (const { username, webhook } of config) {
+    await checkInstagram(username, webhook);
+    await new Promise(r => setTimeout(r, 2000));
   }
 
+  fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true });
+  fs.writeFileSync(DATA_FILE, JSON.stringify(lastPosts, null, 2));
   console.log('✅ Done!');
-}
-
-main().catch(console.error);
+})();
