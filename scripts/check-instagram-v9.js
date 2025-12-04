@@ -17,30 +17,90 @@ async function checkInstagram(username, webhookUrl) {
   console.log(`📱 Checking @${username}...`);
 
   try {
-    // Use RSS Bridge to get Instagram feed
-    const rssUrl = `https://rss.app/feeds/${username}.xml`;
+    let postUrl, postId, title, pubDate;
 
-    const response = await axios.get(rssUrl, {
-      headers: { 'User-Agent': 'Mozilla/5.0' },
-      timeout: 15000
-    });
+    // METHOD 1: Try RSS Bridge
+    try {
+      const rssUrl = `https://rss.app/feeds/${username}.xml`;
+      const response = await axios.get(rssUrl, {
+        headers: { 'User-Agent': 'Mozilla/5.0' },
+        timeout: 10000
+      });
 
-    // Parse RSS XML
-    const xml = response.data;
-    const linkMatch = xml.match(/<link>([^<]+)<\/link>/g);
-    const titleMatch = xml.match(/<title><!\[CDATA\[([^\]]+)\]\]><\/title>/);
-    const pubDateMatch = xml.match(/<pubDate>([^<]+)<\/pubDate>/);
+      const xml = response.data;
+      const linkMatch = xml.match(/<link>([^<]+)<\/link>/g);
+      const titleMatch = xml.match(/<title><!\[CDATA\[([^\]]+)\]\]><\/title>/);
+      const pubDateMatch = xml.match(/<pubDate>([^<]+)<\/pubDate>/);
 
-    if (!linkMatch || linkMatch.length < 2) {
-      console.log(`⚠️ No posts found\n`);
-      return;
+      if (linkMatch && linkMatch.length >= 2) {
+        postUrl = linkMatch[1].replace(/<\/?link>/g, '');
+        postId = postUrl.split('/').filter(Boolean).pop();
+        title = titleMatch ? titleMatch[1] : `New post from @${username}`;
+        pubDate = pubDateMatch ? new Date(pubDateMatch[1]) : new Date();
+        console.log(`   ✓ Method 1 (RSS) success`);
+      }
+    } catch (err) {
+      console.log(`   ⚠️ Method 1 (RSS) failed: ${err.message}`);
     }
 
-    const postUrl = linkMatch[1].replace(/<\/?link>/g, '');
-    const postId = postUrl.split('/').filter(Boolean).pop();
-    const title = titleMatch ? titleMatch[1] : `New post from @${username}`;
-    const pubDate = pubDateMatch ? new Date(pubDateMatch[1]) : new Date();
+    // METHOD 2: Try HTML scraping if RSS failed
+    if (!postUrl) {
+      try {
+        const html = await axios.get(`https://www.instagram.com/${username}/`, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Referer': 'https://www.instagram.com/',
+            'Cache-Control': 'no-cache'
+          },
+          timeout: 10000
+        });
 
+        // Extract post ID from HTML
+        const match = html.data.match(/"shortcode":"([^"]+)"/);
+        if (match) {
+          const shortcode = match[1];
+          postId = shortcode;
+          postUrl = `https://www.instagram.com/p/${shortcode}/`;
+          title = `New post from @${username}`;
+          pubDate = new Date();
+          console.log(`   ✓ Method 2 (HTML scraping) success`);
+        }
+      } catch (err) {
+        console.log(`   ⚠️ Method 2 (HTML) failed: ${err.message}`);
+      }
+    }
+
+    // METHOD 3: Try alternative RSS (Bibliogram)
+    if (!postUrl) {
+      try {
+        const altRssUrl = `https://bibliogram.art/u/${username}/rss.xml`;
+        const response = await axios.get(altRssUrl, {
+          headers: { 'User-Agent': 'Mozilla/5.0' },
+          timeout: 10000
+        });
+
+        const xml = response.data;
+        const linkMatch = xml.match(/<link>([^<]+)<\/link>/g);
+        if (linkMatch && linkMatch.length >= 2) {
+          postUrl = linkMatch[1].replace(/<\/?link>/g, '');
+          postId = postUrl.split('/').filter(Boolean).pop();
+          title = `New post from @${username}`;
+          pubDate = new Date();
+          console.log(`   ✓ Method 3 (Alt RSS) success`);
+        }
+      } catch (err) {
+        console.log(`   ⚠️ Method 3 (Alt RSS) failed: ${err.message}`);
+      }
+    }
+
+    // If all methods failed
+    if (!postUrl) {
+      throw new Error('All methods failed to fetch Instagram data');
+    }
+
+    // Check if post is new
     if (lastPosts[username] === postId) {
       console.log(`✓ No new posts\n`);
       return;
@@ -66,7 +126,7 @@ async function checkInstagram(username, webhookUrl) {
     lastPosts[username] = postId;
 
   } catch (error) {
-    console.error(`❌ Error: ${error.message}`);
+    console.error(`❌ All methods failed: ${error.message}`);
 
     // FIRST RUN: Send test notification
     if (!lastPosts[username]) {
