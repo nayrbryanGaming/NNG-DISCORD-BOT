@@ -1,0 +1,241 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ===== CORE MODELS =====
+
+model Guild {
+  id                     String    @id // Discord Guild ID
+  name                   String
+  
+  // Announcement settings
+  announcement_channel   String?   // Default channel ID for announcements
+  timezone               String    @default("UTC")
+  announcement_mode      String    @default("instant") // "instant" | "summary"
+  summary_interval       Int       @default(60) // minutes
+  
+  // Subscription/Premium
+  subscription_status    String    @default("free") // "free" | "premium"
+  premium_expires        DateTime?
+  
+  // Metadata
+  created_at             DateTime  @default(now())
+  updated_at             DateTime  @updatedAt
+  
+  // Relations
+  links                  Link[]
+  subscriptions          Subscription[]
+}
+
+model User {
+  id         String   @id // Discord User ID
+  username   String
+  avatar_url String?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  
+  links      Link[]   @relation("LinkOwner")
+  payments   Payment[]
+}
+
+model Link {
+  id                 String   @id @default(uuid())
+  
+  // Foreign keys
+  guild_id           String
+  owner_id           String
+  
+  // Platform info
+  platform           String   // "youtube", "twitter", "instagram", "reddit", "telegram"
+  profile_url        String   // Full URL (e.g., youtube.com/@channelname)
+  profile_handle     String   // Extracted handle/username
+  profile_id         String?  // Platform-specific ID (e.g., YouTube channel ID)
+  
+  // Tracking settings
+  content_types      String   @default("posts") // JSON array: ["posts", "videos", "reels", "live"]
+  
+  // Polling state
+  last_check         DateTime?
+  last_seen_id       String?  // Last content ID detected
+  last_seen_timestamp DateTime?
+  
+  // Status
+  status             String   @default("active") // "active" | "error" | "paused"
+  error_message      String?
+  error_count        Int      @default(0)
+  
+  // Metadata
+  created_at         DateTime @default(now())
+  updated_at         DateTime @updatedAt
+  
+  // Relations
+  guild              Guild    @relation(fields: [guild_id], references: [id], onDelete: Cascade)
+  owner              User     @relation("LinkOwner", fields: [owner_id], references: [id])
+  events             LinkEvent[]
+  
+  @@index([guild_id])
+  @@index([platform])
+  @@index([status])
+  @@unique([guild_id, platform, profile_id]) // Prevent duplicate links
+}
+
+model LinkEvent {
+  id             String   @id @default(uuid())
+  
+  // Foreign key
+  link_id        String
+  
+  // Content
+  content_id     String   // Platform-specific ID (video ID, tweet ID, etc.)
+  content_type   String   // "video", "post", "tweet", "reel", "live_start"
+  title          String?
+  description    String?
+  media_url      String?  // Thumbnail or preview image URL
+  url            String   // Direct link to content
+  
+  // Timing
+  published_at   DateTime
+  announced_at   DateTime?
+  
+  // Metadata
+  created_at     DateTime @default(now())
+  
+  // Relations
+  link           Link     @relation(fields: [link_id], references: [id], onDelete: Cascade)
+  
+  @@index([link_id])
+  @@index([content_id])
+  @@unique([link_id, content_id]) // Prevent duplicate announcements
+}
+
+// ===== SUBSCRIPTION & PAYMENT =====
+
+model Subscription {
+  id              String   @id @default(uuid())
+  
+  // Foreign key
+  guild_id        String
+  
+  // Subscription details
+  tier            String   @default("free") // "free" | "premium"
+  status          String   @default("active") // "active" | "expired" | "pending"
+  
+  // Dates
+  starts_at       DateTime?
+  expires_at      DateTime?
+  auto_renew      Boolean  @default(false)
+  
+  // Metadata
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+  
+  // Relations
+  guild           Guild    @relation(fields: [guild_id], references: [id], onDelete: Cascade)
+  payments        Payment[]
+  
+  @@index([guild_id])
+  @@index([status])
+  @@index([expires_at])
+}
+
+model Payment {
+  id                 String   @id @default(uuid())
+  
+  // Foreign keys
+  subscription_id    String
+  user_id            String
+  
+  // Payment details
+  method             String   // "crypto" | "midtrans"
+  amount             Float    // Amount in primary units (e.g., 10.00 USDC)
+  currency           String   // "USDC" | "USDT" | "IDR"
+  
+  // Crypto fields
+  blockchain         String?  // "polygon" | "ethereum" | "solana"
+  tx_hash            String?  @unique
+  wallet_address     String?  // Sender wallet address
+  unique_amount      Float?   // For payment matching (e.g., 10.37 USDC)
+  
+  // Status
+  status             String   // "pending" | "confirmed" | "failed" | "expired"
+  
+  // Metadata
+  created_at         DateTime @default(now())
+  confirmed_at       DateTime?
+  expires_at         DateTime? // For pending payments (expire after 1 hour)
+  
+  // Relations
+  subscription       Subscription @relation(fields: [subscription_id], references: [id], onDelete: Cascade)
+  user               User     @relation(fields: [user_id], references: [id])
+  
+  @@index([subscription_id])
+  @@index([user_id])
+  @@index([tx_hash])
+  @@index([status])
+}
+
+// ===== PLATFORM CONFIGURATION =====
+
+model PlatformConfig {
+  platform          String   @id
+  
+  enabled           Boolean  @default(true)
+  tier              Int      @default(1) // 1 = free tier, 2 = premium only
+  
+  // Rate limiting
+  rate_limit_per_hour Int   @default(60)
+  cache_duration_secs Int   @default(300) // 5 minutes
+  
+  // Platform-specific config (JSON)
+  config            String   @default("{}") // Flexible JSON for future expansions
+  
+  updated_at        DateTime @updatedAt
+}
+
+// ===== LOGGING & DEBUGGING =====
+
+model SystemLog {
+  id         String   @id @default(uuid())
+  
+  level      String   // "debug" | "info" | "warn" | "error"
+  category   String   // "watcher" | "payment" | "command" | "discord" | "platform"
+  message    String
+  metadata   String?  // JSON
+  
+  created_at DateTime @default(now())
+  
+  @@index([level])
+  @@index([category])
+  @@index([created_at])
+}
+
+// ===== BACKGROUND JOBS =====
+
+model BackgroundJob {
+  id             String   @id @default(uuid())
+  
+  job_type       String   // "check_link" | "payment_watch" | "subscription_expire"
+  status         String   @default("pending") // "pending" | "running" | "completed" | "failed"
+  
+  data           String?  // JSON containing job parameters
+  error_message  String?
+  
+  scheduled_for  DateTime
+  started_at     DateTime?
+  completed_at   DateTime?
+  
+  created_at     DateTime @default(now())
+  updated_at     DateTime @updatedAt
+  
+  @@index([status])
+  @@index([scheduled_for])
+  @@index([job_type])
+}
