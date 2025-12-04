@@ -26,15 +26,3 @@ jobs:
       env:
         WEBHOOK_CONFIG: ${{ secrets.WEBHOOK_CONFIG }}
       run: node scripts/check-instagram.js
-    
-    - name: Commit last check data
-      run: |
-        git config user.name "GitHub Actions Bot"
-        git config user.email "actions@github.com"
-        git add data/last-posts.json || true
-        if ! git diff --quiet || ! git diff --staged --quiet; then
-          git commit -m "Update last check data [skip ci]"
-          git push
-        else
-          echo "No changes to commit"
-        fi
