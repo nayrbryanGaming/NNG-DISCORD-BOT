@@ -25,4 +25,4 @@ jobs:
     - name: Run Instagram checker
       env:
         WEBHOOK_CONFIG: ${{ secrets.WEBHOOK_CONFIG }}
-      run: node scripts/check-instagram.js
+      run: node scripts/check-instagram-v2.js
