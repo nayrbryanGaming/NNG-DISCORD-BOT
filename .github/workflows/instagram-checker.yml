@@ -20,9 +20,9 @@ jobs:
         python-version: '3.11'
     
     - name: Install dependencies
-      run: pip install instagrapi requests
+      run: pip install requests
     
-    - name: Run Instagram checker
+    - name: Run Instagram checker (v7)
       env:
         WEBHOOK_CONFIG: ${{ secrets.WEBHOOK_CONFIG }}
-      run: python scripts/check-instagram-v6.py
+      run: python scripts/check-instagram-v7.py
