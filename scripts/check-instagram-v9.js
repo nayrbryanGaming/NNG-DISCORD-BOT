@@ -1,89 +1,129 @@
-#!/usr/bin/env node
-const https = require('https');
+const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 
-const STATE_FILE = path.join(__dirname, '../data/last-posts.json');
-const CONFIG = JSON.parse(process.env.WEBHOOK_CONFIG || '[]');
+const WEBHOOK_CONFIG = JSON.parse(process.env.WEBHOOK_CONFIG || '[]');
+const DATA_FILE = path.join(__dirname, '../data/last-posts.json');
 
-function fetchURL(url) {
-  return new Promise((resolve, reject) => {
-    https.get(url, { 
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
-    }, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => resolve(data));
-    }).on('error', reject);
-  });
+function loadLastPosts() {
+  try {
+    if (fs.existsSync(DATA_FILE)) {
+      return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+    }
+  } catch (err) {
+    console.error('Error loading last posts:', err);
+  }
+  return {};
 }
 
-function postToDiscord(webhook, embed) {
-  return new Promise((resolve) => {
-    const payload = JSON.stringify({ embeds: [embed] });
-    const url = new URL(webhook);
+function saveLastPosts(data) {
+  try {
+    const dir = path.dirname(DATA_FILE);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+  } catch (err) {
+    console.error('Error saving last posts:', err);
+  }
+}
+
+async function fetchInstagramPosts(username) {
+  try {
+    const url = `https://www.instagram.com/${username}/?__a=1&__d=dis`;
     
-    https.request({
-      hostname: url.hostname,
-      path: url.pathname + url.search,
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) }
-    }, (res) => {
-      res.on('data', () => {});
-      res.on('end', resolve);
-    }).on('error', resolve).end(payload);
-  });
+    const response = await axios.get(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Cache-Control': 'no-cache',
+      },
+      timeout: 10000
+    });
+
+    if (response.data && response.data.graphql) {
+      const user = response.data.graphql.user;
+      const posts = user.edge_owner_to_timeline_media.edges;
+      
+      return posts.slice(0, 1).map(edge => ({
+        id: edge.node.id,
+        shortcode: edge.node.shortcode,
+        caption: edge.node.edge_media_to_caption.edges[0]?.node.text || '',
+        timestamp: edge.node.taken_at_timestamp,
+        url: `https://www.instagram.com/p/${edge.node.shortcode}/`,
+        thumbnail: edge.node.display_url
+      }));
+    }
+    
+    return [];
+  } catch (err) {
+    console.error(`Error fetching Instagram for ${username}:`, err.message);
+    return [];
+  }
 }
 
-async function checkInstagram() {
-  console.log('🚀 Instagram Checker v9 (SIMPLE)');
+async function sendDiscordNotification(webhookUrl, username, post, isFirstRun) {
+  try {
+    const embed = {
+      title: isFirstRun ? `✅ Now monitoring @${username}` : `📸 New post from @${username}`,
+      description: post.caption.substring(0, 200) + (post.caption.length > 200 ? '...' : ''),
+      url: post.url,
+      color: isFirstRun ? 0x00FF00 : 0xE1306C,
+      image: { url: post.thumbnail },
+      footer: { text: `Posted at ${new Date(post.timestamp * 1000).toLocaleString()}` }
+    };
+
+    await axios.post(webhookUrl, { embeds: [embed] });
+    console.log(`   ✅ Sent to Discord`);
+  } catch (err) {
+    console.error(`Error sending Discord notification:`, err.message);
+  }
+}
+
+async function main() {
+  console.log('🚀 Instagram Checker v9');
   console.log(`⏰ ${new Date().toISOString()}\n`);
 
-  let state = {};
-  if (fs.existsSync(STATE_FILE)) {
-    try { state = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch {}
-  }
+  const lastPosts = loadLastPosts();
 
-  for (const { username, webhook } of CONFIG) {
-    console.log(`📱 @${username}...`);
-    
+  for (const config of WEBHOOK_CONFIG) {
+    const { username, webhook } = config;
+    console.log(`📱 Checking @${username}...`);
+
     try {
-      const html = await fetchURL(`https://www.instagram.com/${username}/`);
-      const match = html.match(/{"id":"(\d+)","taken_at":\d+,"device_timestamp":"[^"]+","media_type":\d+/);
-      
-      if (!match) {
-        console.log(`   ⚠️ Could not parse\n`);
+      const posts = await fetchInstagramPosts(username);
+      if (!posts.length) {
+        console.log(`   ⚠️ No posts found\n`);
         continue;
       }
 
-      const postId = match[1];
-      const lastId = state[username];
+      const latestPost = posts[0];
+      const lastPostId = lastPosts[username];
 
-      if (!lastId) {
-        console.log(`   ✅ First run - saved\n`);
-        state[username] = postId;
-        fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
-        continue;
-      }
-
-      if (postId !== lastId) {
-        console.log(`   🆕 NEW POST!\n`);
-        await postToDiscord(webhook, {
-          title: `📸 New from @${username}`,
-          url: `https://www.instagram.com/${username}/`,
-          color: 0xE1306C
-        });
-        state[username] = postId;
-        fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+      if (!lastPostId) {
+        // First run - send notification
+        console.log(`   🆕 First run - sending latest post`);
+        await sendDiscordNotification(webhook, username, latestPost, true);
+        lastPosts[username] = latestPost.id;
+        saveLastPosts(lastPosts);
+      } else if (lastPostId !== latestPost.id) {
+        // New post detected
+        console.log(`   🆕 NEW POST DETECTED!`);
+        await sendDiscordNotification(webhook, username, latestPost, false);
+        lastPosts[username] = latestPost.id;
+        saveLastPosts(lastPosts);
       } else {
-        console.log(`   ℹ️ No new posts\n`);
+        // No new posts
+        console.log(`   ℹ️ No new posts`);
       }
-    } catch (e) {
-      console.log(`   ❌ Error: ${e.message}\n`);
+    } catch (err) {
+      console.error(`   ❌ Error: ${err.message}`);
     }
+    console.log();
   }
 
   console.log('✅ Done!');
 }
 
-checkInstagram().catch(console.error);
+main().catch(console.error);
